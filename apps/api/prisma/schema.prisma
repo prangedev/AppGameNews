@@ -1,0 +1,377 @@
+// AppGameNews — schema canônico.
+// `prisma migrate dev` em desenvolvimento; `prisma migrate deploy` em prod.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ===========================================================================
+// Catálogo
+// ===========================================================================
+
+model Game {
+  id          String   @id @default(uuid()) @db.Uuid
+  slug        String   @unique
+  title       String
+  normalized  String   @db.VarChar(200) // título normalizado p/ dedup
+  coverUrl    String?
+  description String?
+  developer   String?
+  publisher   String?
+  tags        String[]
+  metacritic  Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  externalIds  GameExternalId[]
+  releases     GameRelease[]
+  dlcs         Dlc[]
+  pricePoints  PricePoint[]
+  lowestPrices PriceLowest[]
+  freebies     Freebie[]
+  news         NewsItem[]
+  wishlistedBy WishlistItem[]
+  notifications Notification[]
+
+  @@index([normalized])
+  @@map("game")
+}
+
+model GameExternalId {
+  id       String @id @default(uuid()) @db.Uuid
+  gameId   String @db.Uuid
+  source   String // DataSource
+  sourceId String
+  game     Game   @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@unique([source, sourceId])
+  @@index([gameId])
+  @@map("game_external_id")
+}
+
+model GameRelease {
+  id          String    @id @default(uuid()) @db.Uuid
+  gameId      String    @db.Uuid
+  platform    String // Platform
+  region      String?
+  releaseDate DateTime?
+  type        String // ReleaseType: base|dlc|update
+  name        String?
+  version     String?
+  source      String
+  createdAt   DateTime  @default(now())
+  game        Game      @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@unique([gameId, platform, type, name])
+  @@index([releaseDate])
+  @@index([platform, releaseDate])
+  @@map("game_release")
+}
+
+model Dlc {
+  id          String    @id @default(uuid()) @db.Uuid
+  gameId      String    @db.Uuid
+  store       String
+  title       String
+  releaseDate DateTime?
+  url         String?
+  source      String
+  game        Game      @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@unique([gameId, store, title])
+  @@map("dlc")
+}
+
+model PricePoint {
+  id             String   @id @default(uuid()) @db.Uuid
+  gameId         String   @db.Uuid
+  store          String
+  currency       String   @db.VarChar(3)
+  amountCents    Int
+  regularCents   Int
+  discountPct    Int      @default(0)
+  url            String?
+  source         String
+  capturedAt     DateTime @default(now())
+  game           Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@index([gameId, store, capturedAt])
+  @@index([capturedAt])
+  @@map("price_point")
+}
+
+// menor preço histórico materializado (1 por game+store+currency)
+model PriceLowest {
+  id          String   @id @default(uuid()) @db.Uuid
+  gameId      String   @db.Uuid
+  store       String
+  currency    String   @db.VarChar(3)
+  amountCents Int
+  at          DateTime
+  game        Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@unique([gameId, store, currency])
+  @@map("price_lowest")
+}
+
+model Freebie {
+  id        String    @id @default(uuid()) @db.Uuid
+  gameId    String?   @db.Uuid
+  title     String
+  store     String
+  platform  String
+  kind      String // FreebieKind
+  startsAt  DateTime?
+  endsAt    DateTime?
+  claimUrl  String
+  coverUrl  String?
+  source    String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  game      Game?     @relation(fields: [gameId], references: [id], onDelete: SetNull)
+
+  @@unique([store, title, startsAt])
+  @@index([endsAt])
+  @@map("freebie")
+}
+
+model NewsItem {
+  id          String   @id @default(uuid()) @db.Uuid
+  gameId      String?  @db.Uuid
+  source      String
+  title       String
+  url         String
+  publishedAt DateTime
+  summary     String?
+  externalId  String   @unique
+  game        Game?    @relation(fields: [gameId], references: [id], onDelete: SetNull)
+
+  @@index([publishedAt])
+  @@map("news_item")
+}
+
+model TitleAlias {
+  id         String @id @default(uuid()) @db.Uuid
+  normalized String @unique
+  gameId     String @db.Uuid
+
+  @@map("title_alias")
+}
+
+// ===========================================================================
+// Usuários e autenticação
+// ===========================================================================
+
+model User {
+  id            String   @id @default(uuid()) @db.Uuid
+  email         String   @unique
+  displayName   String
+  passwordHash  String? // null quando só há login social
+  emailVerified Boolean  @default(false)
+  isAdmin       Boolean  @default(false)
+  disabledAt    DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  identities         Identity[]
+  refreshTokens      RefreshToken[]
+  emailVerifications EmailVerification[]
+  passwordResets     PasswordReset[]
+  devices            Device[]
+  wishlist           WishlistItem[]
+  notifications      Notification[]
+  notificationPref   NotificationPref?
+  loginAttempts      LoginAttempt[]
+  reports            Report[]
+
+  @@map("user")
+}
+
+model Identity {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @db.Uuid
+  provider     String // AuthProvider: google|steam|epic
+  providerUid  String
+  email        String?
+  // dados de token de terceiros, cifrados em repouso (AES-256-GCM)
+  encryptedTokens String?
+  createdAt    DateTime @default(now())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUid])
+  @@index([userId])
+  @@map("identity")
+}
+
+model RefreshToken {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @db.Uuid
+  tokenHash   String    @unique // sha-256 do token; o valor cru nunca é salvo
+  familyId    String    @db.Uuid // rotação: mesma família = mesma sessão
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  replacedBy  String?   @db.Uuid
+  usedAt      DateTime? // se um token já usado voltar, é reuso -> revoga família
+  ip          String?
+  userAgent   String?
+  createdAt   DateTime  @default(now())
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@map("refresh_token")
+}
+
+model EmailVerification {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  tokenHash String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("email_verification")
+}
+
+model PasswordReset {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  tokenHash String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("password_reset")
+}
+
+model LoginAttempt {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String?  @db.Uuid
+  emailKey  String // hash do e-mail tentado (não guardamos o e-mail cru aqui)
+  ip        String?
+  success   Boolean
+  createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([emailKey, createdAt])
+  @@index([ip, createdAt])
+  @@map("login_attempt")
+}
+
+// ===========================================================================
+// Notificações e wishlist
+// ===========================================================================
+
+model Device {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  fcmToken  String   @unique
+  platform  String // android|ios|web
+  lastSeen  DateTime @default(now())
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("device")
+}
+
+model WishlistItem {
+  id              String   @id @default(uuid()) @db.Uuid
+  userId          String   @db.Uuid
+  gameId          String   @db.Uuid
+  targetPriceCents Int?
+  currency        String   @default("BRL") @db.VarChar(3)
+  triggers        String[] // WishlistTrigger[]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  game            Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, gameId])
+  @@index([gameId])
+  @@map("wishlist_item")
+}
+
+model Notification {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  type      String // NotificationType
+  gameId    String?  @db.Uuid
+  title     String
+  body      String
+  data      Json?
+  channel   String // NotificationChannel
+  dedupeKey String
+  sentAt    DateTime?
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  game      Game?    @relation(fields: [gameId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, dedupeKey])
+  @@index([userId, createdAt])
+  @@map("notification")
+}
+
+model NotificationPref {
+  userId          String  @id @db.Uuid
+  channels        String[] @default(["push", "in_app"])
+  quietHoursStart Int?
+  quietHoursEnd   Int?
+  digest          String  @default("off") // off|daily|weekly
+  user            User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notification_pref")
+}
+
+// ===========================================================================
+// Operacional / segurança
+// ===========================================================================
+
+model AuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  actorId   String?  @db.Uuid
+  action    String
+  target    String?
+  ip        String?
+  userAgent String?
+  meta      Json?
+  createdAt DateTime @default(now())
+
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+  @@map("audit_log")
+}
+
+model SourceHealth {
+  source       String   @id
+  lastRunAt    DateTime?
+  lastSuccessAt DateTime?
+  lastError    String?
+  itemsLastRun Int      @default(0)
+  updatedAt    DateTime @updatedAt
+
+  @@map("source_health")
+}
+
+model Report {
+  id         String   @id @default(uuid()) @db.Uuid
+  reporterId String?  @db.Uuid
+  kind       String
+  entityType String
+  entityId   String   @db.Uuid
+  message    String?
+  resolvedAt DateTime?
+  createdAt  DateTime @default(now())
+  reporter   User?    @relation(fields: [reporterId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@map("report")
+}

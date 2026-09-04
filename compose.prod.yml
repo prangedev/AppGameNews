@@ -1,0 +1,68 @@
+# Overlay de produção. Sobe nginx (TLS + rate limit) na frente da API,
+# remove MailHog e portas expostas de banco/redis, e liga backups.
+#
+# Uso:
+#   docker compose -f docker-compose.yml -f compose.prod.yml up -d
+#
+# Requer um .env com segredos reais (SMTP, JWT_*, OAuth, FCM...) e
+# certificados em ./infra/nginx/certs/ (fullchain.pem + privkey.pem)
+# ou um terminador TLS externo (Cloudflare, ALB, Caddy).
+services:
+  postgres:
+    ports: []
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set in .env}
+
+  redis:
+    ports: []
+
+  mailhog:
+    profiles: ["disabled"]
+
+  api:
+    build:
+      args:
+        NODE_ENV: production
+    environment:
+      NODE_ENV: production
+    ports: []
+    expose:
+      - "3000"
+
+  worker:
+    build:
+      args:
+        NODE_ENV: production
+    environment:
+      NODE_ENV: production
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./infra/nginx/certs:/etc/nginx/certs:ro
+
+  pgbackup:
+    image: prodrigestivill/postgres-backup-local:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      SCHEDULE: "@daily"
+      BACKUP_KEEP_DAYS: "7"
+      BACKUP_KEEP_WEEKS: "4"
+    volumes:
+      - ./backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy

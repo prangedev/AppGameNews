@@ -1,0 +1,30 @@
+{
+  "name": "appgamenews",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Agregador de lançamentos, atualizações, DLCs, jogos grátis e histórico de preços de jogos (PC + consoles).",
+  "engines": {
+    "node": ">=20.11.0",
+    "pnpm": ">=9"
+  },
+  "packageManager": "pnpm@9.12.0",
+  "scripts": {
+    "build": "pnpm -r --filter \"./packages/*\" --filter \"./apps/api\" --filter \"./apps/extension\" build",
+    "dev:api": "pnpm --filter @appgamenews/api start:dev",
+    "dev:worker": "pnpm --filter @appgamenews/api start:worker",
+    "dev:extension": "pnpm --filter @appgamenews/extension dev",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "prisma:migrate": "pnpm --filter @appgamenews/api prisma:migrate",
+    "prisma:seed": "pnpm --filter @appgamenews/api prisma:seed",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "demo": "bash scripts/demo.sh",
+    "security:scan": "bash scripts/security-scan.sh"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "prettier": "^3.3.3",
+    "typescript": "^5.5.4"
+  }
+}
